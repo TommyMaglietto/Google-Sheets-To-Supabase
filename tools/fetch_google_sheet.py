@@ -87,8 +87,14 @@ def fetch_sheet() -> list[dict]:
         print("Sheet has no data rows (only headers or is empty).")
         return []
 
-    headers = values[0]
-    rows    = [dict(zip(headers, row)) for row in values[1:]]
+    headers  = values[0]
+    num_cols = len(headers)
+    # Pad rows: Google Sheets API omits trailing empty cells.
+    # zip() truncates to the shortest iterable, which would silently drop columns.
+    rows = [
+        dict(zip(headers, row + [""] * (num_cols - len(row))))
+        for row in values[1:]
+    ]
     return rows
 
 # ---------------------------------------------------------------------------
@@ -100,13 +106,13 @@ def main():
 
     print(f"Fetching sheet '{SHEET_NAME}' from {SHEET_ID} ...")
     rows = fetch_sheet()
-    print(f"  → {len(rows)} row(s) fetched.")
+    print(f"  -> {len(rows)} row(s) fetched.")
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         json.dump(rows, f, indent=2, ensure_ascii=False)
 
-    print(f"  → Written to {OUTPUT_PATH}")
+    print(f"  -> Written to {OUTPUT_PATH}")
 
 if __name__ == "__main__":
     main()

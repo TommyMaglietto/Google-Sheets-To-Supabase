@@ -39,4 +39,47 @@ python tools/upsert_to_supabase.py
 ## Change Log
 | Date | What changed |
 |---|---|
-| 2026-02-04 | Initial workflow created |
+| 2026-02-04 | Initial workflow created (Flow A — upsert) |
+| 2026-02-04 | Flow B added: DROP+CREATE+INSERT via psycopg2; row-padding fix in fetch; SUPABASE_DB_URL added to .env.example |
+
+---
+
+## Flow B — Create New Table (DROP + CREATE + INSERT)
+
+### Objective
+Read a Google Sheet and create a **brand-new** Supabase table whose schema is
+derived entirely from the sheet headers. If the table already exists it is
+dropped and recreated. All data is copied in a single transaction.
+
+### Inputs
+| Input | Source | Description |
+|---|---|---|
+| `GOOGLE_SHEET_ID` | `.env` | The ID of the source Google Sheet |
+| `GOOGLE_SHEET_NAME` | `.env` | The tab/sheet name within the workbook (default: `Sheet1`) |
+| `SUPABASE_PROJECT_REF` | `.env` | Your Supabase project ref — visible in the dashboard URL |
+| `SUPABASE_MANAGEMENT_KEY` | `.env` | Personal Access Token from Supabase Account → Access Tokens |
+| `SUPABASE_TABLE` | `.env` | Name of the table to create (or drop-and-recreate) |
+
+### Tools (in order)
+1. **`tools/fetch_google_sheet.py`** — Same as Flow A. Writes `.tmp/sheet_data.json`. Trailing empty cells are padded so every row has all columns.
+2. **`tools/create_table_and_insert.py`** — Posts DROP + CREATE + INSERT as a single SQL string to the Supabase Management API. Creates the table with `id SERIAL PRIMARY KEY` + one `TEXT` column per sheet header.
+
+### Expected Outputs
+- `.tmp/sheet_data.json` — Intermediate (same as Flow A, disposable)
+- A new (or freshly recreated) table in Supabase with all sheet data
+
+### Edge Cases & Known Behaviours
+- **Table already exists:** Dropped and recreated. This is a full replace, not a merge.
+- **Blank cells in the sheet:** Become `NULL` in the database (not empty strings).
+- **Column-name collisions after sanitization:** Resolved by appending `_2`, `_3`, … The full mapping (original header → sanitized name) is printed to the console before any SQL runs.
+- **Transaction rollback:** If the INSERT fails (e.g. connection drop mid-flight) the DROP and CREATE are also rolled back. The table is left in whatever state it was in *before* the script ran.
+- **Empty sheet (headers only, no data rows):** Exits cleanly with a message; no SQL is executed.
+
+### How to Run
+```bash
+# Step 1 — fetch data from Google Sheets (shared with Flow A)
+python tools/fetch_google_sheet.py
+
+# Step 2 — create table and insert
+python tools/create_table_and_insert.py
+```
