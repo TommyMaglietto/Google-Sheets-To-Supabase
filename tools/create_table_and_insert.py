@@ -36,10 +36,11 @@ from dotenv import load_dotenv
 BASE_DIR        = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-PROJECT_REF     = os.getenv("SUPABASE_PROJECT_REF")
-MANAGEMENT_KEY  = os.getenv("SUPABASE_MANAGEMENT_KEY")
-TABLE_NAME      = os.getenv("SUPABASE_TABLE")
-INPUT_PATH      = BASE_DIR / ".tmp" / "sheet_data.json"
+PROJECT_REF       = os.getenv("SUPABASE_PROJECT_REF")
+MANAGEMENT_KEY    = os.getenv("SUPABASE_MANAGEMENT_KEY")
+TABLE_NAME        = os.getenv("SUPABASE_TABLE")
+EXTRA_COLUMNS_RAW = os.getenv("EXTRA_COLUMNS", "")   # comma-separated: last_messaged,other_col
+INPUT_PATH        = BASE_DIR / ".tmp" / "sheet_data.json"
 
 # ---------------------------------------------------------------------------
 # Column-name sanitization
@@ -179,18 +180,19 @@ def build_values_clause(rows: list[list]) -> str:
     )
 
 
-def build_full_sql(table: str, col_names: list[str], value_rows: list[list]) -> str:
+def build_full_sql(table: str, col_names: list[str], value_rows: list[list], extra_cols: list[str] | None = None) -> str:
     """
     Build the complete multi-statement SQL:
       DROP TABLE IF EXISTS …;
-      CREATE TABLE … (id SERIAL PRIMARY KEY, …);
-      INSERT INTO … VALUES …;
+      CREATE TABLE … (id SERIAL PRIMARY KEY, sheet cols…, extra cols…);
+      INSERT INTO … VALUES …;   (sheet cols only — extra cols default to NULL)
     """
     # DROP
     drop = f'DROP TABLE IF EXISTS "{table}";'
 
-    # CREATE
-    cols_ddl = ",\n    ".join(f'"{col}" TEXT' for col in col_names)
+    # CREATE — sheet columns + any extra columns
+    all_create_cols = col_names + (extra_cols or [])
+    cols_ddl = ",\n    ".join(f'"{col}" TEXT' for col in all_create_cols)
     create = (
         f'CREATE TABLE "{table}" (\n'
         f'    id SERIAL PRIMARY KEY,\n'
@@ -198,7 +200,7 @@ def build_full_sql(table: str, col_names: list[str], value_rows: list[list]) -> 
         f');'
     )
 
-    # INSERT
+    # INSERT — sheet columns only; extra columns are left as NULL
     cols_list = ", ".join(f'"{col}"' for col in col_names)
     values    = build_values_clause(value_rows)
     insert    = f'INSERT INTO "{table}" ({cols_list}) VALUES\n{values};'
@@ -272,8 +274,13 @@ def main():
     # ----- convert rows (empty string → None) -----------------------------
     value_rows = rows_to_values(rows, original_headers)
 
+    # ----- parse extra columns (not in sheet — created as blank TEXT) -------
+    extra_cols = [sanitize_column_name(c) for c in EXTRA_COLUMNS_RAW.split(",") if c.strip()]
+    if extra_cols:
+        print(f"\n  Extra columns (will be NULL): {extra_cols}")
+
     # ----- build & send SQL ------------------------------------------------
-    sql = build_full_sql(TABLE_NAME, sanitized_names, value_rows)
+    sql = build_full_sql(TABLE_NAME, sanitized_names, value_rows, extra_cols)
 
     print(f"\n  Sending to Supabase Management API ...")
     run_query(sql)
